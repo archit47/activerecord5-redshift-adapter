@@ -19,8 +19,8 @@ module ActiveRecord
         @@ignore_tables = []
 
         class << self
-          def dump(connection=ActiveRecord::Base.connection, stream=STDOUT, config = ActiveRecord::Base)
-            new(connection, generate_options(config)).dump(stream)
+          def dump(connection=ActiveRecord::Base.connection, stream=STDOUT, schema="l2", config = ActiveRecord::Base)
+            new(connection, generate_options(config)).dump(stream, schema)
             stream
           end
 
@@ -33,7 +33,8 @@ module ActiveRecord
           end
         end
 
-        def dump(stream)
+        def dump(stream, schema)
+          @connection.execute("SET search_path to \"#{schema}\"")
           header(stream)
           extensions(stream)
           tables(stream)

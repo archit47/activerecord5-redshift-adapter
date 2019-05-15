@@ -88,8 +88,6 @@ module ActiveRecord
             drop_table(table_name, options)
           end
 
-          schema_search_path
-
           result = execute schema_creation.accept td
 
           unless supports_indexes_in_create?
