@@ -46,11 +46,52 @@ module ActiveRecord
         end
       end
 
-      class ColumnDefinition < ActiveRecord::ConnectionAdapters::ColumnDefinition
+      class ColumnDefinition < Struct.new(:name, :type, :limit, :encode, :precision, :scale, :default, :null, :first, :after, :auto_increment, :primary_key, :collation, :sql_type, :comment) #:nodoc:
+
+        def primary_key?
+          primary_key || type.to_sym == :primary_key
+        end
       end
 
       class TableDefinition < ActiveRecord::ConnectionAdapters::TableDefinition
         include ColumnMethods
+        attr_reader :schema, :diststyle, :distkey, :sortkey, :sortstyle
+
+        def initialize(name, temporary = false, options = nil, as = nil, comment: nil,
+                       sortstyle: "COMPOUND", sortkey: nil, diststyle: "EVEN", distkey: nil, schema: "public")
+          @columns_hash = {}
+          @indexes = []
+          @foreign_keys = []
+          @primary_keys = nil
+          @temporary = temporary
+          @options = options
+          @as = as
+          @name = name
+          @schema = schema.nil? ? "public" : schema
+          @comment = comment
+          @sortstyle = sortstyle.nil? ? "COMPOUND" : sortstyle
+          @sortkey = sortkey
+          @distkey = distkey
+          @diststyle = diststyle.nil? ? "EVEN" : diststyle
+        end
+
+        def new_column_definition(name, type, options) # :nodoc:
+          type = aliased_types(type.to_s, type)
+          column = create_column_definition name, type
+          column.limit       = options[:limit]
+          column.precision   = options[:precision]
+          column.scale       = options[:scale]
+          column.default     = options[:default]
+          column.null        = options[:null]
+          column.first       = options[:first]
+          column.after       = options[:after]
+          column.auto_increment = options[:auto_increment]
+          column.primary_key = type == :primary_key || options[:primary_key]
+          column.collation   = options[:collation]
+          column.comment     = options[:comment]
+          column.encode = options[:encoding]
+          column
+        end
 
         private
 

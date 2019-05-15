@@ -4,14 +4,57 @@ module ActiveRecord
       class SchemaCreation < AbstractAdapter::SchemaCreation
         private
 
+        def visit_TableDefinition(o)
+          create_sql = "CREATE#{' TEMPORARY' if o.temporary} TABLE #{quote_table_name(o.schema)}.#{quote_table_name(o.name)} "
+          statements = o.columns.map { |c| accept c }
+          statements << accept(o.primary_keys) if o.primary_keys
+          if supports_indexes_in_create?
+            statements.concat(o.indexes.map { |column_name, options| index_in_create(o.name, column_name, options) })
+          end
+          if supports_foreign_keys?
+            statements.concat(o.foreign_keys.map { |to_table, options| foreign_key_in_create(o.name, to_table, options) })
+          end
+
+          create_sql << "(#{statements.join(', ')})" if statements.present?
+          create_sql << " DISTSTYLE #{o.diststyle}"
+          if o.diststyle.downcase == "key"
+            create_sql << " DISTKEY (#{o.distkey})"
+          end
+
+          if o.sortkey
+            create_sql << " #{o.sortstyle} SORTKEY(#{o.sortkey.join(', ')})"
+          end
+          add_table_options!(create_sql, table_options(o))
+          create_sql << " AS #{@conn.to_sql(o.as)}" if o.as
+          create_sql
+        end
+
+        def column_options(o)
+          column_options = {}
+          column_options[:null] = o.null unless o.null.nil?
+          column_options[:default] = o.default unless o.default.nil?
+          column_options[:column] = o
+          column_options[:first] = o.first
+          column_options[:after] = o.after
+          column_options[:auto_increment] = o.auto_increment
+          column_options[:primary_key] = o.primary_key
+          column_options[:collation] = o.collation
+          column_options[:comment] = o.comment
+          column_options[:encode] = o.encode
+          column_options
+        end
+
         def visit_ColumnDefinition(o)
           o.sql_type = type_to_sql(o.type, o.limit, o.precision, o.scale)
-          super
+          column_sql = super
+          column_sql + " ENCODE #{o.encode}"
         end
 
         def add_column_options!(sql, options)
           column = options.fetch(:column) { return super }
           if column.type == :uuid && options[:default] =~ /\(\)/
+            sql << " DEFAULT #{options[:default]}"
+          elsif options[:default] == "sysdate"
             sql << " DEFAULT #{options[:default]}"
           else
             super
@@ -20,6 +63,51 @@ module ActiveRecord
       end
 
       module SchemaStatements
+
+        def create_table(table_name, comment: nil, **options)
+          td = create_table_definition table_name, options[:temporary], options[:options], options[:as], comment: comment,
+                                       sortstyle: options[:sortstyle], sortkey: options[:sortkey],
+                                       diststyle: options[:diststyle], distkey: options[:distkey],
+                                       schema: options[:schema]
+
+          if options[:id] != false && !options[:as]
+            pk = options.fetch(:primary_key) do
+              Base.get_primary_key table_name.to_s.singularize
+            end
+
+            if pk.is_a?(Array)
+              td.primary_keys pk
+            else
+              td.primary_key pk, options.fetch(:id, :primary_key), options
+            end
+          end
+
+          yield td if block_given?
+
+          if options[:force] && data_source_exists?(table_name)
+            drop_table(table_name, options)
+          end
+
+          schema_search_path
+
+          result = execute schema_creation.accept td
+
+          unless supports_indexes_in_create?
+            td.indexes.each do |column_name, index_options|
+              add_index(table_name, column_name, index_options)
+            end
+          end
+
+          if supports_comments? && !supports_comments_in_create?
+            change_table_comment(table_name, comment) if comment.present?
+
+            td.columns.each do |column|
+              change_column_comment(table_name, column.name, column.comment) if column.comment.present?
+            end
+          end
+          result
+        end
+
         # Drops the database specified on the +name+ attribute
         # and creates it again using the provided +options+.
         def recreate_database(name, options = {}) #:nodoc:
@@ -40,11 +128,11 @@ module ActiveRecord
 
           option_string = options.inject("") do |memo, (key, value)|
             memo += case key
-            when :owner
-              " OWNER = \"#{value}\""
-            else
-              ""
-            end
+                    when :owner
+                      " OWNER = \"#{value}\""
+                    else
+                      ""
+                    end
           end
 
           execute "CREATE DATABASE #{quote_table_name(name)}#{option_string}"
@@ -79,10 +167,10 @@ module ActiveRecord
           SQL
         end
 
-         # Returns true if table exists.
-         # If the schema is not specified as part of +name+ then it will only find tables within
-         # the current schema search path (regardless of permissions to access tables in other schemas)
-         def table_exists?(name)
+        # Returns true if table exists.
+        # If the schema is not specified as part of +name+ then it will only find tables within
+        # the current schema search path (regardless of permissions to access tables in other schemas)
+        def table_exists?(name)
           ActiveSupport::Deprecation.warn(<<-MSG.squish)
             #table_exists? currently checks both tables and views.
             This behavior is deprecated and will be changed with Rails 5.1 to only check tables.
@@ -169,7 +257,7 @@ module ActiveRecord
 
         # Returns the current schema name.
         def current_schema
-          select_value('SELECT current_schema', 'SCHEMA')
+          select_value('SELECT current_schema()', 'SCHEMA')
         end
 
         # Returns the current database encoding format.
@@ -347,9 +435,9 @@ module ActiveRecord
 
           fk_info.map do |row|
             options = {
-              column: row['column'],
-              name: row['name'],
-              primary_key: row['primary_key']
+                column: row['column'],
+                name: row['name'],
+                primary_key: row['primary_key']
             }
 
             options[:on_delete] = extract_foreign_key_action(row['on_delete'])
@@ -378,10 +466,10 @@ module ActiveRecord
             return 'integer' unless limit
 
             case limit
-              when 1, 2; 'smallint'
-              when nil, 3, 4; 'integer'
-              when 5..8; 'bigint'
-              else raise(ActiveRecordError, "No integer type has byte size #{limit}. Use a numeric with precision 0 instead.")
+            when 1, 2; 'smallint'
+            when nil, 3, 4; 'integer'
+            when 5..8; 'bigint'
+            else raise(ActiveRecordError, "No integer type has byte size #{limit}. Use a numeric with precision 0 instead.")
             end
           else
             super
@@ -392,12 +480,12 @@ module ActiveRecord
         # requires that the ORDER BY include the distinct column.
         def columns_for_distinct(columns, orders) #:nodoc:
           order_columns = orders.reject(&:blank?).map{ |s|
-              # Convert Arel node to string
-              s = s.to_sql unless s.is_a?(String)
-              # Remove any ASC/DESC modifiers
-              s.gsub(/\s+(?:ASC|DESC)\b/i, '')
-               .gsub(/\s+NULLS\s+(?:FIRST|LAST)\b/i, '')
-            }.reject(&:blank?).map.with_index { |column, i| "#{column} AS alias_#{i}" }
+            # Convert Arel node to string
+            s = s.to_sql unless s.is_a?(String)
+            # Remove any ASC/DESC modifiers
+            s.gsub(/\s+(?:ASC|DESC)\b/i, '')
+                .gsub(/\s+NULLS\s+(?:FIRST|LAST)\b/i, '')
+          }.reject(&:blank?).map.with_index { |column, i| "#{column} AS alias_#{i}" }
 
           [super, *order_columns].join(', ')
         end
@@ -405,12 +493,12 @@ module ActiveRecord
         def fetch_type_metadata(column_name, sql_type, oid, fmod)
           cast_type = get_oid_type(oid.to_i, fmod.to_i, column_name, sql_type)
           simple_type = SqlTypeMetadata.new(
-            sql_type: sql_type,
-            type: cast_type.type,
-            limit: cast_type.limit,
-            precision: cast_type.precision,
-            scale: cast_type.scale,
-          )
+              sql_type: sql_type,
+              type: cast_type.type,
+              limit: cast_type.limit,
+              precision: cast_type.precision,
+              scale: cast_type.scale,
+              )
           TypeMetadata.new(simple_type, oid: oid, fmod: fmod)
         end
       end
