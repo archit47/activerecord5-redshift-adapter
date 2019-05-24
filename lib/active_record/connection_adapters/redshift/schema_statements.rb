@@ -47,7 +47,8 @@ module ActiveRecord
         def visit_ColumnDefinition(o)
           o.sql_type = type_to_sql(o.type, o.limit, o.precision, o.scale)
           column_sql = super
-          column_sql + " ENCODE #{o.encode}"
+          column_sql << " ENCODE #{o.encode}" if o.encode
+          column_sql
         end
 
         def add_column_options!(sql, options)
@@ -87,8 +88,6 @@ module ActiveRecord
           if options[:force] && data_source_exists?(table_name)
             drop_table(table_name, options)
           end
-
-          schema_search_path
 
           result = execute schema_creation.accept td
 

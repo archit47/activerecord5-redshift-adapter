@@ -56,6 +56,7 @@ module ActiveRecord
       class TableDefinition < ActiveRecord::ConnectionAdapters::TableDefinition
         include ColumnMethods
         attr_reader :schema, :diststyle, :distkey, :sortkey, :sortstyle
+        attr_writer :schema, :diststyle, :distkey, :sortkey, :sortstyle
 
         def initialize(name, temporary = false, options = nil, as = nil, comment: nil,
                        sortstyle: "COMPOUND", sortkey: nil, diststyle: "EVEN", distkey: nil, schema: "public")
