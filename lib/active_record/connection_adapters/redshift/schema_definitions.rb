@@ -94,6 +94,10 @@ module ActiveRecord
           column
         end
 
+        def []=(key, value)
+          @columns_hash[key] = value
+        end
+
         private
 
         def create_column_definition(name, type)
