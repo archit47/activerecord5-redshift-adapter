@@ -298,6 +298,10 @@ module ActiveRecord
         # This should be not be called manually but set in database.yml.
         def schema_search_path=(schema_csv)
           if schema_csv
+            existing_schemas = execute("select nspname from pg_catalog.pg_namespace;").values
+            unless existing_schemas.map{|x| x[0]}.include?(schema_csv)
+              execute("CREATE SCHEMA #{schema_csv}")
+            end
             execute("SET search_path TO #{schema_csv}", 'SCHEMA')
             @schema_search_path = schema_csv
           end

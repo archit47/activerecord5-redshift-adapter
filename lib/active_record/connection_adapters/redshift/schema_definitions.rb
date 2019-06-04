@@ -68,7 +68,7 @@ module ActiveRecord
           @options = options
           @as = as
           @name = name
-          @schema = schema.nil? ? "public" : schema
+          @schema = schema.nil? ? Base.connection.execute("SELECT current_schema();").values[0][0] : schema
           @comment = comment
           @sortstyle = sortstyle.nil? ? "COMPOUND" : sortstyle
           @sortkey = sortkey
