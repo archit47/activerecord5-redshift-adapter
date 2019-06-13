@@ -493,6 +493,24 @@ module ActiveRecord
           [super, *order_columns].join(', ')
         end
 
+        def dump_schema_information #:nodoc:
+          versions = ActiveRecord::SchemaMigration.order('version').pluck(:version)
+          insert_versions_sql(versions) if versions.any?
+        end
+
+        def insert_versions_sql(versions) # :nodoc:
+          sm_table = quote_table_name(ActiveRecord::Migrator.schema_migrations_table_name)
+
+          if versions.is_a?(Array)
+            sql = "INSERT INTO \"#{current_schema}\".#{sm_table} (version) VALUES\n"
+            sql << versions.map { |v| "(#{quote(v)})" }.join(",\n")
+            sql << ";\n\n"
+            sql
+          else
+            "INSERT INTO \"#{current_schema}\".#{sm_table} (version) VALUES (#{quote(versions)});"
+          end
+        end
+
         def fetch_type_metadata(column_name, sql_type, oid, fmod)
           cast_type = get_oid_type(oid.to_i, fmod.to_i, column_name, sql_type)
           simple_type = SqlTypeMetadata.new(
