@@ -44,8 +44,8 @@ module ActiveRecord
         end
 
         def test_encoded_password
-          password = 'am@z1ng_p@ssw0rd#!'
-          encoded_password = URI.encode_www_form_component(password)
+          test_pass = 'some_test_pass_word'
+          encoded_password = URI.encode_www_form_component(test_pass)
           spec = resolve "abstract://foo:#{encoded_password}@localhost/bar"
           assert_equal password, spec[:password]
         end
